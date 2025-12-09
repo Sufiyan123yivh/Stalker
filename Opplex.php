@@ -1,127 +1,67 @@
 <?php
 
-// -------------------------
 // CORS
-// -------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    header("Access-Control-Allow-Origin: *");
-    header("Access-Control-Allow-Methods: GET, OPTIONS");
-    header("Access-Control-Allow-Headers: Content-Type");
-    http_response_code(204);
-    exit;
-}
-
 header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: GET");
 
-// -------------------------
-// Detect TS Request
-// -------------------------
-if (isset($_GET['ts'])) {
-    serve_ts($_GET['ts'], $_GET['base']);
-    exit;
-}
-
-// -------------------------
-// Validate id
-// -------------------------
-if (!isset($_GET['id']) || empty($_GET['id'])) {
+// Validate ID
+if (!isset($_GET["id"]) || empty($_GET["id"])) {
     http_response_code(400);
     echo "Missing id";
     exit;
 }
 
-$id = $_GET['id'];
+$id = $_GET["id"];
 
-// -------------------------
-// STEP 1 — Request Opplex URL
-// -------------------------
-$firstUrl = "http://opplex.to/live/umar/umar123/{$id}.m3u8";
+// STEP 1 — Load original URL
+$start = "http://opplex.to/live/umar/umar123/{$id}.m3u8";
 
-$playlist = curl_fetch($firstUrl, $finalUrl);
+$ch = curl_init($start);
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_FOLLOWLOCATION => true,
+    CURLOPT_USERAGENT => "Mozilla/5.0",
+]);
 
-if (!$playlist) {
-    http_response_code(500);
-    echo "Error fetching playlist.";
-    exit;
+$body = curl_exec($ch);
+$info = curl_getinfo($ch);
+curl_close($ch);
+
+// STEP 2 — Get final host after redirect
+$final = $info["url"];    // EFFECTIVE URL after redirect
+
+if (!$final) {
+    // fallback
+    $final = $start;
 }
 
-// Extract final playlist host
-$parsed = parse_url($finalUrl);
-$baseHost = $parsed['scheme'] . "://" . $parsed['host'] . ":" . ($parsed['port'] ?? 80);
+// Extract base domain
+$u = parse_url($final);
+$port = isset($u["port"]) ? ":" . $u["port"] : "";
+$base = $u["scheme"] . "://" . $u["host"] . $port;
 
-// -------------------------
-// STEP 2 — Rewrite TS URLs to proxy
-// -------------------------
-$lines = explode("\n", $playlist);
-$new = [];
+// STEP 3 — Rewrite only TS segments to absolute URLs
+$lines = explode("\n", $body);
+$out = [];
 
 foreach ($lines as $line) {
     $trim = trim($line);
 
     if ($trim === "" || str_starts_with($trim, "#")) {
-        $new[] = $line;
+        $out[] = $line;
         continue;
     }
 
-    // Convert "/hls/xxx.ts" → proxy.php?ts=/hls/xxx.ts&base=<host>
-    if (!preg_match('/^https?:\/\//', $trim)) {
-        $enc = urlencode($trim);
-        $encHost = urlencode($baseHost);
-        $line = "Opplex.php?ts={$enc}&base={$encHost}";
+    // if it's a relative path like "/hls/xxxx.ts"
+    if (str_starts_with($trim, "/hls/")) {
+        $out[] = $base . $trim;   // convert to absolute
+        continue;
     }
 
-    $new[] = $line;
+    // If it's already absolute URL, keep it
+    $out[] = $line;
 }
 
-$output = implode("\n", $new);
-
-// -------------------------
-// STEP 3 — Send final rewritten playlist
-// -------------------------
+// STEP 4 — Output final M3U8
 header("Content-Type: application/vnd.apple.mpegurl");
-echo $output;
-
-
-// -------------------------
-// Fetch function
-// -------------------------
-function curl_fetch($url, &$final = null)
-{
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_USERAGENT => "Mozilla/5.0",
-    ]);
-
-    $res = curl_exec($ch);
-
-    $final = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
-    curl_close($ch);
-
-    return $res;
-}
-
-// -------------------------
-// Serve TS segments properly
-// -------------------------
-function serve_ts($ts, $base)
-{
-    $path = urldecode($ts);
-    $host = urldecode($base);
-
-    // Build the real segment URL
-    $segmentUrl = rtrim($host, "/") . $path;
-
-    $data = curl_fetch($segmentUrl, $x);
-
-    if (!$data) {
-        http_response_code(404);
-        exit;
-    }
-
-    header("Content-Type: video/mp2t");
-    echo $data;
-}
-
-?>
+echo implode("\n", $out);
