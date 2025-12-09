@@ -17,7 +17,7 @@ if (!isset($_GET['id']) || empty($_GET['id'])) {
 }
 
 $id = preg_replace('/[^0-9]/', '', $_GET['id']); // sanitize numeric ID
-$targetUrl = "https://opplex.rw/live/umar/umar123/{$id}.m3u8";
+$targetUrl = "https://opplex.to/live/umar/umar123/{$id}.m3u8";
 
 // CURL Fetch Function
 function curl_get($url) {
